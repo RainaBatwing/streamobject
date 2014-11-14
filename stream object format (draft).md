@@ -1,16 +1,26 @@
 ## Draft Stream Object format
 
-__ This spec is *very experimental* and should not be used for anything ever__ at least not yet!
+**This spec is *very experimental* and should not be used for anything ever**
+at least not yet!
 
-Stream Objects are containers designed to securely store several files, and can be safely replicated to friends computers for distributed storage. Encryption allows your intended audience to discover decryption keys and access the content. This specification is inspired by [miniLock](https://minilock.io/) but not compatible with it. Here are some features:
+Stream Objects are containers designed to securely store several files, and
+can be safely replicated to friends computers for distributed storage.
+Encryption allows your intended audience to discover decryption keys and
+access the content. This specification is inspired by
+[miniLock](https://minilock.io/) but not compatible with it. Here are some
+features:
 
   * Decryption speed stays fast even with a large number of audience members.
   * Encryption is relatively fast, if you cache curve25519 shared keys.
-  * Tens of thousands of files can be attached. Files can be hundreds of gigabytes in size.
-  * Individual files can be decrypted randomly as needed and streamed out in 1MiB chunks.
-  * Everything is hashed and signed with author's public key to verify authenticity and integrity.
+  * Tens of thousands of files can be attached. Files can be hundreds of
+    gigabytes in size.
+  * Individual files can be decrypted randomly as needed and streamed out in
+    1MiB chunks.
+  * Everything is hashed and signed with author's public key to verify
+    authenticity and integrity.
 
-Stream Objects were designed with the goal of storing social media posts, like blog entries, for replication via distributed networks.
+Stream Objects were designed with the goal of storing social media posts,
+like blog entries, for replication via distributed networks.
 
 Objects contain the following parts concatenated:
 
@@ -70,8 +80,9 @@ an attached file with index -1, as a single chunk with chunk index 0
 ### Appended file data
 
 Files listed in the `header.private.files` section are encrypted and appended
-in the order specified in the header using tweetnacl's secretbox function. For files larger than 1MiB, the file is
-split in to chunks of exactly 1MiB, with the final chunk shorter as necessary.
+in the order specified in the header using tweetnacl's secretbox function. For
+files larger than 1MiB, the file is split in to chunks of exactly 1MiB, with
+the final chunk shorter as necessary.
 
 Each chunk is encrypted with the secret key from CipherPermit, as well as a
 unique nonce:
@@ -85,16 +96,18 @@ chunk_nonce = nonce18 + signed_int16(file_index) + unsigned_int32(chunk_index)
 
 ### Speedy unlocking
 
-CipherPermits are stored in a hash table, keyed by a short 4 byte hash of the CipherPermit's shared key. This shared key is only known by the recipient and the author, as it is derived from their curve25519 keys. Some entropy from the 32 byte
-
-CipherPermits are stored with keys derived from the shared key used to lock
-them. This surely weakens security at least somewhat, as some information is
-known about the shared key. The author does not know if this is a terrible
+CipherPermits are stored in a hash table, keyed by a short 4 byte hash of
+the CipherPermit's shared key. This shared key is only known by the recipient
+and the author, as it is derived from their curve25519 keys. This surely
+weakens security at least somewhat, as some information is known about the
+shared key in plaintext. The author (Raina) does not know if this is a terrible
 idea. Benchmarking with the tweetnacl.js library indicated attempting decrypt
-of 1000 CipherPermits on a moderately powerful laptop takes about 300 to 500 milliseconds. This
-rate is unacceptably slow, as the primary use case includes most if not all
-of an author's friends, which could include thousands of keys.
+of 1000 CipherPermits on a moderately powerful laptop takes about 300 to 500
+milliseconds. This rate is unacceptably slow, as a primary use case would
+include hundreds if not thousands of permits.
 
 It is hoped that the 4 byte index hash doesn't provide enough information to
 significantly reduce security of the shared keys or curve25519 keys they are
 derived from. Any feedback on this would be greatfully welcomed, as I am a noob.
+
+ ~~<3 Raina
