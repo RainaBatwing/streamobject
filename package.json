@@ -1,0 +1,30 @@
+{
+  "name": "streamobject",
+  "description": "Encrypted randomly accessable file container for distributed social media content",
+  "version": "0.0.1",
+  "keywords": [
+    "private",
+    "archive",
+    "container",
+    "social",
+    "mesh"
+  ],
+  "author": { "name": "Raina Batwing" },
+  "main": "./streamobject.js",
+  "dependencies": {
+    "tweetnacl": ">=0.12.2",
+    "blake2s-js": "~1.0.3",
+    "bs58": "~2.0"
+  },
+  "devDependencies": {
+    "coffee-script": "~1.8"
+  },
+  "scripts": {
+    "prepublish": "coffee -c ."
+  },
+  "homepage": "https://github.com/RainaBatwing/streamobject",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RainaBatwing/streamobject.git"
+  }
+}
