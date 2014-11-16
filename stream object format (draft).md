@@ -36,7 +36,7 @@ Objects contain the following parts concatenated:
 header = {
   id: "b58string of 128 random bytes"
   version: "A" # only A exists so far
-  keys: # author's public keys
+  author: # author's public keys
     ed25519: "b58string"
     curve25519: "b58string"
   # decryption keys for each audience member
@@ -48,7 +48,7 @@ header = {
     "b58string of blake2s index hash (4 byte digest length)": [
       # usually one CipherPermit would exist in this array
       "b58string of CipherPermit"
-      # but sometimes more may exist, if there is a hash collision during write
+      # but sometimes more may exist, if there is a hashIndex collision
       "b58string of another CipherPermit"
     ]
     # CipherPermit is a 24 byte nonce concatenated with the output of
@@ -58,7 +58,7 @@ header = {
     # these details can be used to decrypt "private" and attached files
     # CipherPermit's nonce must be totally random, and is never reused
     # CipherPermitPlaintext is identical for every recipient.
-  private: secretbox encrypted(
+  private: base64 encoded < secretbox encrypted < json object {
     "kind": "post", "profile", or "private" # kind of content
     "timestamp": 1415238668655 # milliseconds since unix epoch
     "files":[
@@ -67,7 +67,7 @@ header = {
       # second file 1521 bytes long
       ["catface.jpg", "image/jpeg", 1521]
     ]
-  )
+  }
 }
 ```
 
