@@ -108,6 +108,6 @@ include hundreds if not thousands of permits.
 
 It is hoped that the 4 byte index hash doesn't provide enough information to
 significantly reduce security of the shared keys or curve25519 keys they are
-derived from. Any feedback on this would be greatfully welcomed, as I am a noob.
+derived from. Any feedback on this would be gratefully welcomed, as I am a noob.
 
  ~~<3 Raina
