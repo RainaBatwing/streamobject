@@ -39,6 +39,9 @@ header = {
   author: # author's public keys
     ed25519: "b58string"
     curve25519: "b58string"
+  # used to determine caching duration, trumping, and quota  
+  kind: "post", "profile", or "private" # kind of content
+  timestamp: 1415238668655 # milliseconds since unix epoch
   # decryption keys for each audience member
   audience:
     salt: "b58string 64bits of entropy"
@@ -59,9 +62,7 @@ header = {
     # CipherPermit's nonce must be totally random, and is never reused
     # CipherPermitPlaintext is identical for every recipient.
   private: base64 encoded < secretbox encrypted < json object {
-    "kind": "post", "profile", or "private" # kind of content
-    "timestamp": 1415238668655 # milliseconds since unix epoch
-    "files":[
+    files:[
       # example first file's plaintext is 251 bytes long
       ["post.html", "text/html", 251],
       # second file 1521 bytes long
