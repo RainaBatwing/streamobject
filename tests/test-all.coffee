@@ -44,7 +44,7 @@ suite.addBatch
         nonce: nacl.randomBytes(18)
         secret: nacl.randomBytes(nacl.secretbox.keyLength)
       input = new so.BufferReadStream("abc abc ")
-      cipher = new so.ChunkCipher(chunkSize: 4, crypto: crypto)
+      cipher = new so.ChunkCipher(chunkSize: 4, crypto: crypto, fileInfo: {index: 123})
       output = new so.BufferWriteStream
       input.pipe(cipher).pipe(output)
       output.on "finish", => @callback(null, output.getBuffer())
@@ -65,16 +65,16 @@ suite.addBatch
       crypto =
         nonce: nacl.randomBytes(18)
         secret: nacl.randomBytes(nacl.secretbox.keyLength)
-      input = new so.BufferReadStream("You are wonderful!")
-      cipher = new so.ChunkCipher(chunkSize: 3, crypto: crypto)
-      decipher = new so.ChunkDecipher(chunkSize: 3, crypto: crypto)
+      input = new so.BufferReadStream("You are wonderful!!")
+      cipher = new so.ChunkCipher(chunkSize: 3, crypto: crypto, fileInfo: {index: 1337})
+      decipher = new so.ChunkDecipher(chunkSize: 3, crypto: crypto, fileInfo: {index: 1337})
       output = new so.BufferWriteStream
       input.pipe(cipher).pipe(decipher).pipe(output)
       output.on "finish", => @callback(null, output.getBuffer())
       output.on "error", (err)=> @callback(err)
       return
     "output correct":(output)->
-      assert.equal output.toString(), "You are wonderful!"
+      assert.equal output.toString(), "You are wonderful!!"
 
   # stream which passes through everything it sees, creating a blake2s digest of it
   StreamDigester:
@@ -128,21 +128,23 @@ suite.addBatch
           nonce = bs58.encode(cipherPermit[0...nacl.box.nonceLength])
           assert.equal nonces[nonce], undefined
           nonces[nonce] = true
-    "Jessica can read with Reader":
+    "Jessica can unlock with Reader":
       topic:(bits)->
         reader = new so.Reader data: bits.output, callback: (err)=>
-          return callback(err) if err
+          return @callback(err) if err
           # check unlock succeeds
-          assert.notEqual reader.unlock(jessica.curve25519.secretKey), false
+          unlock = reader.unlock(jessica.curve25519.secretKey)
+          assert.equal unlock, reader # unlock succeeded if this is correct
           # read out message
           file = new so.BufferWriteStream
           file.on "finish", => @callback(null, file: file.getBuffer(), reader: reader)
           file.on "error", (err)=> @callback(err)
-          reader.read("post").pipe(file)
+          stream = reader.read("post")
+          stream.pipe(file)
+
         return
-      "file read correctly": (bits)->
-        #console.log bits
-        assert.equal bits.file.toString(), message
+      "file read correctly": ({file})->
+        assert.equal file.toString(), message
 
 
 suite.run() # Run tests

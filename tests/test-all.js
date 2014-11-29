@@ -80,7 +80,10 @@
         input = new so.BufferReadStream("abc abc ");
         cipher = new so.ChunkCipher({
           chunkSize: 4,
-          crypto: crypto
+          crypto: crypto,
+          fileInfo: {
+            index: 123
+          }
         });
         output = new so.BufferWriteStream;
         input.pipe(cipher).pipe(output);
@@ -115,14 +118,20 @@
           nonce: nacl.randomBytes(18),
           secret: nacl.randomBytes(nacl.secretbox.keyLength)
         };
-        input = new so.BufferReadStream("You are wonderful!");
+        input = new so.BufferReadStream("You are wonderful!!");
         cipher = new so.ChunkCipher({
           chunkSize: 3,
-          crypto: crypto
+          crypto: crypto,
+          fileInfo: {
+            index: 1337
+          }
         });
         decipher = new so.ChunkDecipher({
           chunkSize: 3,
-          crypto: crypto
+          crypto: crypto,
+          fileInfo: {
+            index: 1337
+          }
         });
         output = new so.BufferWriteStream;
         input.pipe(cipher).pipe(decipher).pipe(output);
@@ -138,7 +147,7 @@
         })(this));
       },
       "output correct": function(output) {
-        return assert.equal(output.toString(), "You are wonderful!");
+        return assert.equal(output.toString(), "You are wonderful!!");
       }
     },
     StreamDigester: {
@@ -246,18 +255,19 @@
         }
         return _results;
       },
-      "Jessica can read with Reader": {
+      "Jessica can unlock with Reader": {
         topic: function(bits) {
           var reader;
           reader = new so.Reader({
             data: bits.output,
             callback: (function(_this) {
               return function(err) {
-                var file;
+                var file, stream, unlock;
                 if (err) {
-                  return callback(err);
+                  return _this.callback(err);
                 }
-                assert.notEqual(reader.unlock(jessica.curve25519.secretKey), false);
+                unlock = reader.unlock(jessica.curve25519.secretKey);
+                assert.equal(unlock, reader);
                 file = new so.BufferWriteStream;
                 file.on("finish", function() {
                   return _this.callback(null, {
@@ -268,13 +278,16 @@
                 file.on("error", function(err) {
                   return _this.callback(err);
                 });
-                return reader.read("post").pipe(file);
+                stream = reader.read("post");
+                return stream.pipe(file);
               };
             })(this)
           });
         },
-        "file read correctly": function(bits) {
-          return assert.equal(bits.file.toString(), message);
+        "file read correctly": function(_arg) {
+          var file;
+          file = _arg.file;
+          return assert.equal(file.toString(), message);
         }
       }
     }

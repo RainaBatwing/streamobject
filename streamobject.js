@@ -18,7 +18,7 @@
 
   ChunkSize = 1024 * 1024;
 
-  HashIndexBytes = 4;
+  HashIndexBytes = 2;
 
   NonceFor = function(ephemeralNonce, file_idx, chunk_idx) {
     var dataview, nonce;
@@ -41,11 +41,12 @@
 
   StreamObjectReader = (function() {
     function StreamObjectReader(options) {
-      var data;
+      var callback, data;
       if (options == null) {
         options = {};
       }
       data = options.data;
+      callback = options.callback;
       if (!data) {
         throw "data must be provided to constructor";
       }
@@ -53,7 +54,7 @@
         fs.open(data, 'r', null, (function(_this) {
           return function(err, fd) {
             if (err) {
-              return options.callback(err);
+              return callback(err);
             }
             options.data = fd;
             return _this.constructor(options);
@@ -72,14 +73,20 @@
         return function(err, start) {
           var headerLength;
           if (err) {
-            callback(err);
+            return callback(err);
           }
           if (start.slice(0, FileStart.length).toString() !== FileStart) {
-            throw "Provided data is not a StreamObject";
+            return callback("Provided data is not a StreamObject");
           }
           headerLength = start.readUInt32BE(FileStart.length);
           return _this._readData(start.length, headerLength, function(err, rawHeader) {
             var key, value, _ref;
+            if (err) {
+              return callback(err);
+            }
+            if (rawHeader.length < headerLength) {
+              return callback("File truncated inside header");
+            }
             _this.header = JSON.parse(rawHeader);
             _ref = _this.header.author;
             for (key in _ref) {
@@ -87,7 +94,7 @@
               _this.header.author[key] = new Uint8Array(bs58.decode(value));
             }
             _this._headerEnd = start.length + rawHeader.length;
-            return options.callback(err);
+            return callback(err);
           });
         };
       })(this));
@@ -150,52 +157,51 @@
     };
 
     StreamObjectReader.prototype.list = function() {
-      var item, name, size, type;
+      var index, name, size, sourceOffset, type, _i, _len, _ref, _ref1;
       if (!this.permit) {
         throw new Error("Cannot read files from locked StreamObject");
       }
       if (this._list) {
         return this._list;
       }
-      return this._list = (function() {
-        var _i, _len, _ref, _ref1, _results;
-        _ref = this.header["private"].files;
-        _results = [];
-        for (_i = 0, _len = _ref.length; _i < _len; _i++) {
-          _ref1 = _ref[_i], name = _ref1[0], type = _ref1[1], size = _ref1[2];
-          item = "" + name;
-          item.fileType = type;
-          item.fileSize = size;
-          _results.push(item);
-        }
-        return _results;
-      }).call(this);
+      sourceOffset = this._headerEnd;
+      this._list = {};
+      _ref = this.header["private"].files;
+      for (index = _i = 0, _len = _ref.length; _i < _len; index = ++_i) {
+        _ref1 = _ref[index], name = _ref1[0], type = _ref1[1], size = _ref1[2];
+        this._list[name] = new StreamObjectReader.FileInfo(name, type, size, index);
+      }
+      return this._list;
     };
 
     StreamObjectReader.prototype.read = function(filename) {
-      var decipher, file, fileEnd, fileIndex, fileList, fileStart, overhead, topUpDecipher, _i, _len, _ref;
+      var decipher, file, fileEnd, fileList, fileSequence, fileStart, iFile, overhead, topUpDecipher, _i, _len, _ref;
       if (!this.permit) {
         throw new Error("Cannot read files from locked StreamObject");
       }
       fileList = this.list();
-      fileIndex = fileList.indexOf(filename);
-      if (fileIndex === -1) {
+      fileSequence = [];
+      for (iFile in fileList) {
+        fileSequence[iFile.index] = iFile;
+      }
+      file = fileList[filename];
+      if (!file) {
         return null;
       }
-      file = fileList[fileIndex];
       decipher = new ChunkDecipher({
         chunkSize: ChunkSize,
-        crypto: this.permit
+        crypto: this.permit,
+        fileInfo: file
       });
       fileStart = this._headerEnd;
-      _ref = fileList.slice(0, fileIndex);
+      _ref = fileSequence.slice(0, file.index);
       for (_i = 0, _len = _ref.length; _i < _len; _i++) {
-        file = _ref[_i];
-        overhead = Math.floor(file.fileSize / ChunkSize) * nacl.secretbox.overheadLength;
-        fileStart += file.fileSize + overhead;
+        iFile = _ref[_i];
+        overhead = Math.ceil(iFile.size / ChunkSize) * nacl.secretbox.overheadLength;
+        fileStart += iFile.size + overhead;
       }
-      fileEnd = fileStart + file.fileSize;
-      console.log("file start", fileStart, "file end", fileEnd, "size", file.fileSize);
+      overhead = Math.ceil(file.size / ChunkSize) * nacl.secretbox.overheadLength;
+      fileEnd = fileStart + file.size + overhead;
       topUpDecipher = (function(_this) {
         return function() {
           if (fileStart < fileEnd) {
@@ -205,6 +211,7 @@
                 return decipher.emit("error", err);
               }
               morePlz = decipher.write(data);
+              fileStart += data.length;
               if (morePlz) {
                 return topUpDecipher();
               } else {
@@ -221,11 +228,7 @@
     };
 
     StreamObjectReader.prototype._readData = function(start, length, callback) {
-      return process.nextTick((function(_this) {
-        return function() {
-          return callback("constructor didn't override _readData correctly");
-        };
-      })(this));
+      return setImmediate(callback, "constructor didn't override _readData correctly");
     };
 
     StreamObjectReader.prototype._readDataFromFilesystem = function(start, length, callback) {
@@ -240,14 +243,26 @@
     };
 
     StreamObjectReader.prototype._readDataFromBuffer = function(start, length, callback) {
-      return process.nextTick((function(_this) {
-        return function() {
-          return callback(null, _this._data.slice(start, start + length));
-        };
-      })(this));
+      return setImmediate(callback, null, this._data.slice(start, start + length));
     };
 
     return StreamObjectReader;
+
+  })();
+
+  StreamObjectReader.FileInfo = (function() {
+    function FileInfo(name, type, size, index) {
+      this.name = name;
+      this.type = type;
+      this.size = size;
+      this.index = index;
+    }
+
+    FileInfo.prototype.toString = function() {
+      return this.name;
+    };
+
+    return FileInfo;
 
   })();
 
@@ -344,10 +359,8 @@
 
     StreamObjectWriter.prototype.write = function(raw_stream, callback) {
       var file, fileIndex, jsonHeader, jsonHeaderLength, _i, _len, _ref;
-      if (this.written) {
-        return process.nextTick(function() {
-          return typeof callback === "function" ? callback('Already written') : void 0;
-        });
+      if (this.written && callback) {
+        return setImmediate(callback, 'Already written');
       }
       this.written = true;
       if (raw_stream instanceof String) {
@@ -429,9 +442,10 @@
         options = {};
       }
       this.chunkSize = (options.chunkSize || ChunkSize) + this._inputOverhead;
-      this.fileInfo = options.fileInfo || {
-        index: -1
-      };
+      if (options.fileInfo == null) {
+        throw new Error("fileInfo argument is not optional");
+      }
+      this.fileInfo = options.fileInfo;
       this._chunkIndex = 0;
       this.crypto = options.crypto;
       this._buffer = new Buffer(0);
@@ -442,7 +456,7 @@
     GenericChunkCipher.prototype._transform = function(appendbuf, encoding, done) {
       var err;
       this._buffer = Buffer.concat([this._buffer, appendbuf]);
-      while (this._buffer.length >= this.chunkSize) {
+      while (this._buffer.length >= this.chunkSize && !err) {
         err = this._chunkOut();
       }
       return done(err);
@@ -450,7 +464,7 @@
 
     GenericChunkCipher.prototype._flush = function(done) {
       var err;
-      while (this._buffer.length > 0) {
+      while (this._buffer.length > 0 && !err) {
         err = this._chunkOut();
       }
       return done(err);
@@ -484,7 +498,7 @@
 
     ChunkDecipher.prototype._process = function(ciphertext) {
       var plaintext;
-      return plaintext = nacl.secretbox.open(new Uint8Array(ciphertext), NonceFor(this.crypto.nonce, this.fileInfo.index, this._chunkIndex), this.crypto.secret);
+      return plaintext = nacl.secretbox.open(ciphertext, NonceFor(this.crypto.nonce, this.fileInfo.index, this._chunkIndex), this.crypto.secret);
     };
 
     return ChunkDecipher;
@@ -502,7 +516,7 @@
 
     ChunkCipher.prototype._process = function(plaintext) {
       var ciphertext;
-      return ciphertext = nacl.secretbox(new Uint8Array(plaintext), NonceFor(this.crypto.nonce, this.fileInfo.index, this._chunkIndex), this.crypto.secret);
+      return ciphertext = nacl.secretbox(plaintext, NonceFor(this.crypto.nonce, this.fileInfo.index, this._chunkIndex), this.crypto.secret);
     };
 
     return ChunkCipher;

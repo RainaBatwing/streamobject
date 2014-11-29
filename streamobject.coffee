@@ -6,7 +6,7 @@ bs58 = require 'bs58'
 
 FileStart = "StreamOb"
 ChunkSize = 1024*1024
-HashIndexBytes = 4
+HashIndexBytes = 2
 NonceFor = (ephemeralNonce, file_idx, chunk_idx)->
   throw new "nonce length incorrect" if ephemeralNonce.length != EphemeralNonceLength
   nonce = new Uint8Array(nacl.secretbox.nonceLength)
@@ -19,17 +19,18 @@ EphemeralNonceLength = 18 # random prefix component of CipherPermit nonce
 FileID =
   PrivateSection: -1
 
-
+# decrypt a StreamObject and allow reading files contained within and other metadata
 class StreamObjectReader
   # data argument can be a file descriptor, path string, or a Buffer
   constructor: (options={})->
     # select read mode and do any needed prep
     data = options.data
+    callback = options.callback
     throw "data must be provided to constructor" unless data
     if typeof data is 'string'
       # if it's a path, we need to abort and try constructing when it opens
       fs.open data, 'r', null, (err, fd)=>
-        return options.callback(err) if err
+        return callback(err) if err
         # change data source to file descriptor
         options.data = fd
         @constructor(options) # retry constructing
@@ -42,15 +43,17 @@ class StreamObjectReader
       @_readData = @_readDataFromBuffer
 
     @_readData 0, FileStart.length + 4, (err, start)=>
-      callback(err) if err
+      return callback(err) if err
       if start.slice(0, FileStart.length).toString() isnt FileStart
-        throw "Provided data is not a StreamObject"
+        return callback("Provided data is not a StreamObject")
       headerLength = start.readUInt32BE(FileStart.length)
       @_readData start.length, headerLength, (err, rawHeader)=>
+        return callback(err) if err
+        return callback("File truncated inside header") if rawHeader.length < headerLength
         @header = JSON.parse(rawHeader)
         @header.author[key] = new Uint8Array(bs58.decode(value)) for key, value of @header.author
         @_headerEnd = start.length + rawHeader.length
-        options.callback(err)
+        callback(err)
 
   # pass in an array of recipient secret curve25519 keys to attempt
   unlock:(recipientSecretKeys)->
@@ -108,42 +111,51 @@ class StreamObjectReader
   list:->
     throw new Error("Cannot read files from locked StreamObject") unless @permit
     return @_list if @_list
-    @_list = for [name, type, size] in @header.private.files
-      item = ""+name
-      item.fileType = type
-      item.fileSize = size
-      item
+    sourceOffset = @_headerEnd
+    @_list = {}
+    for [name, type, size], index in @header.private.files
+      @_list[name] = new StreamObjectReader.FileInfo(name, type, size, index)
+    return @_list
 
   # get a readable stream of any file by name or list() entry
   read:(filename)->
     throw new Error("Cannot read files from locked StreamObject") unless @permit
     # get a list of files in this StreamObject
     fileList = @list()
+    # create array of files from list
+    fileSequence = []
+    fileSequence[iFile.index] = iFile for iFile of fileList
     # find index of file
-    fileIndex = fileList.indexOf(filename)
-    return null if fileIndex is -1
-    file = fileList[fileIndex]
+    file = fileList[filename]
+    return null unless file
     # setup decipher stream transformer
-    decipher = new ChunkDecipher(chunkSize: ChunkSize, crypto: @permit)
+    decipher = new ChunkDecipher(chunkSize: ChunkSize, crypto: @permit, fileInfo: file)
     # calculate start of file
     fileStart = @_headerEnd
-    for file in fileList[0...fileIndex]
-      overhead = Math.floor(file.fileSize / ChunkSize) * nacl.secretbox.overheadLength
-      fileStart += file.fileSize + overhead
-    fileEnd = fileStart + file.fileSize
+    for iFile in fileSequence[0...file.index]
+      overhead = Math.ceil(iFile.size / ChunkSize) * nacl.secretbox.overheadLength
+      fileStart += iFile.size + overhead
+    overhead = Math.ceil(file.size / ChunkSize) * nacl.secretbox.overheadLength
+    fileEnd = fileStart + file.size + overhead
 
-    console.log "file start", fileStart, "file end", fileEnd, "size", file.fileSize
+    # console.log "file start", fileStart, "file end", fileEnd, "size", file.size, "type", file.type
     # stream data in to ChunkDecipher as needed
     topUpDecipher = =>
+      # console.log "topping up..."
       if fileStart < fileEnd
         @_readData fileStart, Math.min(fileEnd - fileStart, 1024*128), (err, data)=>
+          # console.log "adding #{data.length}:", nacl.util.encodeBase64(new Uint8Array(data))
+          # console.log "error! #{err}" if err
           return decipher.emit("error", err) if err
           morePlz = decipher.write(data)
+          fileStart += data.length
           if morePlz
+            # console.log "more plz!!", fileStart, fileEnd
             topUpDecipher()
           else
             decipher.once "drain", topUpDecipher
       else
+        # console.log "finished filling decipher"
         decipher.end()
     topUpDecipher() # load in the first chunk
     return decipher
@@ -152,17 +164,21 @@ class StreamObjectReader
 
   # different implementations of _readData for different data sources
   _readData:(start, length, callback)->
-    process.nextTick => callback("constructor didn't override _readData correctly")
+    setImmediate callback, "constructor didn't override _readData correctly"
   _readDataFromFilesystem:(start, length, callback)->
     buffer = new Buffer(length)
     fs.read @_data, buffer, 0, length, start, (err, bytesRead)->
       return callback(err) if err
       callback(null, buffer.slice(0, bytesRead))
   _readDataFromBuffer:(start, length, callback)->
-    process.nextTick => callback(null, @_data.slice(start, start + length))
+    setImmediate callback, null, @_data.slice(start, start + length)
 
+# represents a file contained in a StreamObject, returned by reader.list()
+class StreamObjectReader.FileInfo
+  constructor:(@name, @type, @size, @index)-> #nop
+  toString:()-> @name
 
-
+# create a representation of a StreamObject, and write it out to a writable stream
 class StreamObjectWriter
   constructor: (options = {})->
     @author = options.author or {
@@ -254,7 +270,7 @@ class StreamObjectWriter
   # writes out file/stream asyncronously then calls on_complete
   write: (raw_stream, callback)->
     # ensure this method can only be used once per instance
-    return process.nextTick(->callback?('Already written')) if @written
+    return setImmediate(callback, 'Already written') if @written and callback
     @written = true
 
     # open writable stream to specified path
@@ -329,7 +345,8 @@ class GenericChunkCipher extends stream.Transform
   _inputOverhead: 0
   constructor:(options = {})->
     @chunkSize = (options.chunkSize || ChunkSize) + @_inputOverhead
-    @fileInfo = options.fileInfo || {index: -1}
+    throw new Error("fileInfo argument is not optional") unless options.fileInfo?
+    @fileInfo = options.fileInfo
     @_chunkIndex = 0 # index used for nonce on next processed chunk
     @crypto = options.crypto # {secret, nonce} Uint8Array
     @_buffer = new Buffer(0)
@@ -341,12 +358,12 @@ class GenericChunkCipher extends stream.Transform
     # append new plaintext to incoming chunk buffer
     @_buffer = Buffer.concat([@_buffer, appendbuf])
     # process next chunk, if we have enough data buffered for a full chunk
-    err = @_chunkOut() while @_buffer.length >= @chunkSize
+    err = @_chunkOut() while @_buffer.length >= @chunkSize and !err
     done(err)
 
   # if there's anything in buffer, encrypt and output that
   _flush:(done)->
-    err = @_chunkOut() while @_buffer.length > 0
+    err = @_chunkOut() while @_buffer.length > 0 and !err
     done(err)
 
   # apply crypto _process the next chunk in the buffer, outputting it
@@ -371,7 +388,7 @@ class ChunkDecipher extends GenericChunkCipher
   _inputOverhead: nacl.secretbox.overheadLength
   _process:(ciphertext)->
     plaintext = nacl.secretbox.open(
-      new Uint8Array(ciphertext),
+      ciphertext,
       NonceFor(@crypto.nonce, @fileInfo.index, @_chunkIndex),
       @crypto.secret
     )
@@ -381,7 +398,7 @@ class ChunkCipher extends GenericChunkCipher
   _inputOverhead: 0
   _process:(plaintext)->
     ciphertext = nacl.secretbox(
-      new Uint8Array(plaintext),
+      plaintext,
       NonceFor(@crypto.nonce, @fileInfo.index, @_chunkIndex),
       @crypto.secret
     )
